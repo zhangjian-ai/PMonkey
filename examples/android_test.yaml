@@ -1,0 +1,38 @@
+platform: android
+device_id: emulator-5554
+app_package: com.example.testapp
+
+event_ratios:
+  tap: 0.7
+  swipe: 0.3
+
+interval_ms: 500
+event_count: 1000
+
+bounds:
+  x_min: 100
+  x_max: 900
+  y_min: 200
+  y_max: 1800
+
+monitoring:
+  enabled: true
+  sample_interval_seconds: 2
+  metrics:
+    - cpu
+    - memory
+    - fps
+    - battery
+
+stability:
+  monitor_crashes: true
+  monitor_anr: true
+  monitor_errors: true
+  continue_on_crash: true
+  continue_on_anr: true
+  anr_threshold_seconds: 5.0
+  max_crash_count: 10
+
+report:
+  output_path: ./report.html
+  include_raw_data: false
