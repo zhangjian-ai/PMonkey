@@ -7,7 +7,7 @@ event_ratios:
   swipe: 0.3
 
 interval_ms: 200
-duration_seconds: 180
+duration_seconds: 120
 #event_count: 500
 
 # Swipe gesture duration range in milliseconds (uniformly sampled per swipe)
@@ -18,7 +18,7 @@ swipe_duration:
 bounds:
   x_min: 15
   x_max: 415
-  y_min: 350
+  y_min: 240
   y_max: 750
 
 # 可选：禁区配置（避开特定区域）
@@ -35,6 +35,10 @@ bounds:
 #    x_max: 390
 #    y_min: 800
 #    y_max: 844
+#  - x_min: 0
+#    x_max: 390
+#    y_min: 240
+#    y_max: 500
 
 monitoring:
   enabled: true
