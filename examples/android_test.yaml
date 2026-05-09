@@ -21,6 +21,21 @@ bounds:
   y_min: 700
   y_max: 2030
 
+# 可选：禁区配置（避开特定区域）
+# 所有 tap 和 swipe 的起点/终点都会避开这些区域
+# 适用场景：状态栏、导航栏、退出按钮等敏感区域
+#exclusion_zones:
+#  # 顶部状态栏
+#  - x_min: 0
+#    x_max: 1080
+#    y_min: 0
+#    y_max: 100
+#  # 底部导航栏
+#  - x_min: 0
+#    x_max: 1080
+#    y_min: 2200
+#    y_max: 2340
+
 monitoring:
   enabled: true
   sample_interval_seconds: 1
