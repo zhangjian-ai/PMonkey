@@ -1,146 +1,175 @@
-"""Chart generation for performance metrics."""
+"""Chart data preparation for frontend rendering."""
 
-import base64
-from io import BytesIO
 from typing import List, Optional
-
-import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.figure import Figure
 
 from ..monitoring.metrics import MetricSample
 from ..stability.models import StabilityIssue, StabilityIssueType
 
 
 class ChartGenerator:
-    """Generates charts for performance metrics."""
+    """Prepares chart data for frontend JavaScript rendering."""
 
     @staticmethod
     def generate_performance_charts(
         samples: List[MetricSample],
         stability_issues: Optional[List[StabilityIssue]] = None,
     ) -> dict:
-        """Generate all performance charts.
-
-        Args:
-            samples: List of performance metric samples
-            stability_issues: Optional list of stability issues to annotate
-
-        Returns:
-            Dictionary with base64-encoded chart images
-        """
         if not samples:
             return {}
 
         charts = {}
 
-        # Extract timestamps and convert to seconds from start
-        start_time = samples[0].timestamp
-        timestamps = [(s.timestamp - start_time).total_seconds() for s in samples]
-
-        # Generate CPU chart
-        cpu_values = [s.cpu_percent for s in samples if s.cpu_percent is not None]
-        if cpu_values:
-            charts["cpu"] = ChartGenerator._generate_metric_chart(
-                timestamps[:len(cpu_values)],
-                cpu_values,
-                "CPU Usage (%)",
-                "CPU %",
-                stability_issues,
+        # CPU: dual line (app + sys)
+        cpu_app_data = [
+            (s.timestamp.strftime("%H:%M:%S"), s.cpu_percent)
+            for s in samples if s.cpu_percent is not None
+        ]
+        cpu_sys_data = [
+            (s.timestamp.strftime("%H:%M:%S"), s.sys_cpu_percent)
+            for s in samples if s.sys_cpu_percent is not None
+        ]
+        if cpu_app_data:
+            charts["cpu"] = ChartGenerator._prepare_dual_chart_data(
+                cpu_app_data, cpu_sys_data,
+                "App CPU (%)", "System CPU (%)",
+                "#2196F3", "#90CAF9",
             )
 
-        # Generate Memory chart
-        memory_values = [s.memory_mb for s in samples if s.memory_mb is not None]
-        if memory_values:
-            charts["memory"] = ChartGenerator._generate_metric_chart(
-                timestamps[:len(memory_values)],
-                memory_values,
-                "Memory Usage (MB)",
-                "Memory MB",
-                stability_issues,
+        mem_data = [
+            (s.timestamp.strftime("%H:%M:%S"), s.memory_mb)
+            for s in samples if s.memory_mb is not None
+        ]
+        if mem_data:
+            charts["memory"] = ChartGenerator._prepare_chart_data(
+                mem_data, "Memory Usage (MB)", "#4CAF50"
             )
 
-        # Generate FPS chart
-        fps_values = [s.fps for s in samples if s.fps is not None]
-        if fps_values:
-            charts["fps"] = ChartGenerator._generate_metric_chart(
-                timestamps[:len(fps_values)],
-                fps_values,
-                "FPS",
-                "FPS",
-                stability_issues,
+        fps_data = [
+            (s.timestamp.strftime("%H:%M:%S"), s.fps)
+            for s in samples if s.fps is not None
+        ]
+        if fps_data:
+            charts["fps"] = ChartGenerator._prepare_chart_data(
+                fps_data, "FPS", "#FF9800"
             )
 
-        # Generate Battery chart
-        battery_values = [s.battery_percent for s in samples if s.battery_percent is not None]
-        if battery_values:
-            charts["battery"] = ChartGenerator._generate_metric_chart(
-                timestamps[:len(battery_values)],
-                battery_values,
-                "Battery Level (%)",
-                "Battery %",
-                stability_issues,
+        temp_data = [
+            (s.timestamp.strftime("%H:%M:%S"), s.temperature)
+            for s in samples if s.temperature is not None
+        ]
+        if temp_data:
+            charts["temperature"] = ChartGenerator._prepare_chart_data(
+                temp_data, "Temperature (°C)", "#F44336"
             )
 
         return charts
 
     @staticmethod
-    def _generate_metric_chart(
-        timestamps: List[float],
-        values: List[float],
-        title: str,
-        ylabel: str,
-        stability_issues: Optional[List[StabilityIssue]] = None,
-    ) -> str:
-        """Generate a single metric chart.
+    def _prepare_chart_data(
+        data: List[tuple],
+        label: str,
+        color: str,
+    ) -> dict:
+        """Prepare chart data for Chart.js.
 
         Args:
-            timestamps: Time values in seconds
-            values: Metric values
-            title: Chart title
-            ylabel: Y-axis label
-            stability_issues: Optional stability issues to annotate
-
-        Returns:
-            Base64-encoded PNG image
+            data: List of (timestamp_str, value) tuples
+            label: Data series label
+            color: Line color
         """
-        fig, ax = plt.subplots(figsize=(10, 4))
+        if not data:
+            return {}
 
-        # Plot metric line
-        ax.plot(timestamps, values, linewidth=2, color="#2196F3")
+        labels = [d[0] for d in data]
+        values = [round(d[1], 2) for d in data]
 
-        # Add max and average lines
         max_val = max(values)
-        avg_val = np.mean(values)
+        min_val = min(values)
+        avg_val = sum(values) / len(values)
 
-        ax.axhline(y=max_val, color="red", linestyle="--", linewidth=1, alpha=0.7, label=f"Max: {max_val:.1f}")
-        ax.axhline(y=avg_val, color="green", linestyle="--", linewidth=1, alpha=0.7, label=f"Avg: {avg_val:.1f}")
+        return {
+            "labels": labels,
+            "datasets": [
+                {
+                    "label": label,
+                    "data": values,
+                    "borderColor": color,
+                    "backgroundColor": f"{color}20",
+                    "borderWidth": 2,
+                    "fill": True,
+                    "tension": 0.4,
+                    "pointRadius": 0,
+                    "pointHoverRadius": 4,
+                }
+            ],
+            "stats": {
+                "max": round(max_val, 2),
+                "min": round(min_val, 2),
+                "avg": round(avg_val, 2),
+            },
+        }
 
-        # Annotate crashes and ANRs
-        if stability_issues and timestamps:
-            start_time_offset = timestamps[0] if timestamps else 0
-            for issue in stability_issues:
-                if issue.type in [StabilityIssueType.CRASH, StabilityIssueType.ANR]:
-                    # Calculate issue time relative to start
-                    # For now, we'll mark them at the end since we don't have precise timing
-                    # TODO: Calculate actual issue timestamp relative to test start
-                    marker_color = "red" if issue.type == StabilityIssueType.CRASH else "orange"
-                    marker_label = "Crash" if issue.type == StabilityIssueType.CRASH else "ANR"
+    @staticmethod
+    def _prepare_dual_chart_data(
+        app_data: List[tuple],
+        sys_data: List[tuple],
+        app_label: str,
+        sys_label: str,
+        app_color: str,
+        sys_color: str,
+    ) -> dict:
+        """Prepare dual-line chart data (app + sys) for Chart.js.
 
-        # Styling
-        ax.set_xlabel("Time (seconds)", fontsize=10)
-        ax.set_ylabel(ylabel, fontsize=10)
-        ax.set_title(title, fontsize=12, fontweight="bold")
-        ax.legend(loc="upper right", fontsize=9)
-        ax.grid(True, alpha=0.3)
+        Stats are computed from app_data only.
+        """
+        if not app_data:
+            return {}
 
-        # Convert to base64
-        buffer = BytesIO()
-        plt.tight_layout()
-        plt.savefig(buffer, format="png", dpi=100, bbox_inches="tight")
-        plt.close(fig)
+        labels = [d[0] for d in app_data]
+        app_values = [round(d[1], 2) for d in app_data]
 
-        buffer.seek(0)
-        image_base64 = base64.b64encode(buffer.read()).decode()
+        # Align sys_data to the same label set (use None for missing points)
+        sys_map = {d[0]: round(d[1], 2) for d in sys_data}
+        sys_values = [sys_map.get(t) for t in labels]
 
-        return f"data:image/png;base64,{image_base64}"
+        max_val = max(app_values)
+        min_val = min(app_values)
+        avg_val = sum(app_values) / len(app_values)
+
+        datasets = [
+            {
+                "label": app_label,
+                "data": app_values,
+                "borderColor": app_color,
+                "backgroundColor": f"{app_color}20",
+                "borderWidth": 2,
+                "fill": False,
+                "tension": 0.4,
+                "pointRadius": 0,
+                "pointHoverRadius": 4,
+            },
+        ]
+
+        if any(v is not None for v in sys_values):
+            datasets.append({
+                "label": sys_label,
+                "data": sys_values,
+                "borderColor": sys_color,
+                "backgroundColor": f"{sys_color}10",
+                "borderWidth": 1.5,
+                "borderDash": [4, 2],
+                "fill": False,
+                "tension": 0.4,
+                "pointRadius": 0,
+                "pointHoverRadius": 4,
+            })
+
+        return {
+            "labels": labels,
+            "datasets": datasets,
+            "stats": {
+                "max": round(max_val, 2),
+                "min": round(min_val, 2),
+                "avg": round(avg_val, 2),
+            },
+        }

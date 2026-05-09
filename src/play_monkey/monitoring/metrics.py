@@ -11,18 +11,22 @@ class MetricSample:
 
     timestamp: datetime
     cpu_percent: Optional[float] = None
+    sys_cpu_percent: Optional[float] = None
     memory_mb: Optional[float] = None
     fps: Optional[float] = None
-    battery_percent: Optional[float] = None
+    jank: Optional[int] = None
+    temperature: Optional[float] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
             "timestamp": self.timestamp.isoformat(),
             "cpu_percent": self.cpu_percent,
+            "sys_cpu_percent": self.sys_cpu_percent,
             "memory_mb": self.memory_mb,
             "fps": self.fps,
-            "battery_percent": self.battery_percent,
+            "jank": self.jank,
+            "temperature": self.temperature,
         }
 
 

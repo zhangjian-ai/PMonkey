@@ -94,6 +94,8 @@ class EventGenerator:
         bounds: Optional[BoundsConfig],
         screen_width: int,
         screen_height: int,
+        swipe_duration_min_ms: int = 100,
+        swipe_duration_max_ms: int = 500,
     ):
         """Initialize event generator.
 
@@ -103,17 +105,29 @@ class EventGenerator:
             bounds: Coordinate bounds, or None for full screen
             screen_width: Device screen width
             screen_height: Device screen height
+            swipe_duration_min_ms: Minimum swipe duration in milliseconds
+            swipe_duration_max_ms: Maximum swipe duration in milliseconds
         """
         self.tap_ratio = tap_ratio
         self.swipe_ratio = swipe_ratio
         self.bounds = bounds
         self.screen_width = screen_width
         self.screen_height = screen_height
+        self.swipe_duration_min_ms = swipe_duration_min_ms
+        self.swipe_duration_max_ms = swipe_duration_max_ms
 
         # Validate ratios
         total = tap_ratio + swipe_ratio
         if abs(total - 1.0) > 0.001:
             raise ValueError(f"Event ratios must sum to 1.0, got {total}")
+
+        if swipe_duration_min_ms <= 0 or swipe_duration_max_ms <= 0:
+            raise ValueError("Swipe durations must be positive")
+        if swipe_duration_min_ms > swipe_duration_max_ms:
+            raise ValueError(
+                f"swipe_duration_min_ms ({swipe_duration_min_ms}) must be <= "
+                f"swipe_duration_max_ms ({swipe_duration_max_ms})"
+            )
 
     def generate(self) -> Event:
         """Generate a random event based on configured ratios.
@@ -142,8 +156,8 @@ class EventGenerator:
         x1, y1 = random_point_in_bounds(self.bounds, self.screen_width, self.screen_height)
         x2, y2 = random_point_in_bounds(self.bounds, self.screen_width, self.screen_height)
 
-        # Random duration between 100ms and 500ms
+        # Random duration within the configured range (inclusive on both ends)
         import random
-        duration_ms = random.randint(100, 500)
+        duration_ms = random.randint(self.swipe_duration_min_ms, self.swipe_duration_max_ms)
 
         return SwipeEvent(x1, y1, x2, y2, duration_ms)

@@ -82,6 +82,24 @@ class StabilityConfig(BaseModel):
     max_crash_count: Optional[int] = Field(default=None, gt=0, description="Max crashes before stopping")
 
 
+class SwipeDurationConfig(BaseModel):
+    """Swipe gesture duration configuration.
+
+    The actual duration of each swipe is sampled uniformly from [min_ms, max_ms].
+    Set min_ms == max_ms to produce swipes of a fixed duration.
+    """
+    min_ms: int = Field(default=100, gt=0, description="Minimum swipe duration in milliseconds")
+    max_ms: int = Field(default=500, gt=0, description="Maximum swipe duration in milliseconds")
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "SwipeDurationConfig":
+        if self.min_ms > self.max_ms:
+            raise ValueError(
+                f"swipe duration min_ms ({self.min_ms}) must be <= max_ms ({self.max_ms})"
+            )
+        return self
+
+
 class ReportConfig(BaseModel):
     """Report generation configuration."""
     output_path: str = Field(default="./report.html", description="Report output file path")
@@ -96,6 +114,10 @@ class TestConfig(BaseModel):
 
     event_ratios: EventRatios = Field(description="Event type ratios")
     interval_ms: int = Field(default=500, gt=0, description="Interval between events in milliseconds")
+    swipe_duration: SwipeDurationConfig = Field(
+        default_factory=SwipeDurationConfig,
+        description="Duration range for swipe gestures",
+    )
 
     event_count: Optional[int] = Field(None, gt=0, description="Total events (priority)")
     duration_seconds: Optional[int] = Field(None, gt=0, description="Test duration in seconds")

@@ -29,6 +29,7 @@ class ReportGenerator:
         performance_samples: List[MetricSample],
         stability_report: Optional[StabilityReport],
         output_path: str,
+        performance_monitor=None,
     ) -> None:
         """Generate a test report.
 
@@ -38,6 +39,7 @@ class ReportGenerator:
             performance_samples: List of performance metric samples
             stability_report: Stability monitoring report
             output_path: Output file path
+            performance_monitor: Performance monitor instance (for battery data)
         """
         output_file = Path(output_path)
 
@@ -53,6 +55,13 @@ class ReportGenerator:
                 stability_issues
             )
 
+        # Extract battery data from monitor if available
+        battery_drain_mah = None
+        battery_components = {}
+        if performance_monitor and hasattr(performance_monitor, 'battery_drain_mah'):
+            battery_drain_mah = performance_monitor.battery_drain_mah
+            battery_components = performance_monitor.battery_components
+
         # Prepare template data
         template_data = self._prepare_template_data(
             test_config,
@@ -60,6 +69,8 @@ class ReportGenerator:
             performance_stats,
             charts,
             stability_report,
+            battery_drain_mah,
+            battery_components,
         )
 
         # Generate HTML report
@@ -86,6 +97,8 @@ class ReportGenerator:
         performance_stats: dict,
         charts: dict,
         stability_report: Optional[StabilityReport],
+        battery_drain_mah: Optional[float] = None,
+        battery_components: dict = None,
     ) -> dict:
         """Prepare data for HTML template.
 
@@ -107,10 +120,12 @@ class ReportGenerator:
         stability_issues = []
         total_crashes = 0
         total_anrs = 0
+        total_errors = 0
 
         if stability_report:
             total_crashes = stability_report.total_crashes
             total_anrs = stability_report.total_anrs
+            total_errors = stability_report.total_errors
             stability_issues = [
                 {
                     'type': issue.type.value,
@@ -139,9 +154,12 @@ class ReportGenerator:
             'success_rate': round(success_rate, 1),
             'total_crashes': total_crashes,
             'total_anrs': total_anrs,
+            'total_errors': total_errors,
             'performance_stats': performance_stats,
             'charts': charts,
             'stability_issues': stability_issues,
+            'battery_drain_mah': battery_drain_mah,
+            'battery_components': battery_components or {},
         }
 
     def _generate_html_report(self, template_data: dict, output_path: Path) -> None:
@@ -174,10 +192,17 @@ class ReportGenerator:
             stability_report: Stability report
             output_path: Output file path
         """
+        # Convert datetime objects to ISO format strings
+        serializable_results = dict(test_results)
+        if "start_time" in serializable_results and serializable_results["start_time"]:
+            serializable_results["start_time"] = serializable_results["start_time"].isoformat()
+        if "end_time" in serializable_results and serializable_results["end_time"]:
+            serializable_results["end_time"] = serializable_results["end_time"].isoformat()
+
         report_data = {
             "generated_at": datetime.now().isoformat(),
             "config": test_config,
-            "results": test_results,
+            "results": serializable_results,
             "performance": performance_stats,
             "stability": stability_report.to_dict() if stability_report else None,
         }
@@ -201,12 +226,12 @@ class ReportGenerator:
         cpu_values = [s.cpu_percent for s in samples if s.cpu_percent is not None]
         memory_values = [s.memory_mb for s in samples if s.memory_mb is not None]
         fps_values = [s.fps for s in samples if s.fps is not None]
-        battery_values = [s.battery_percent for s in samples if s.battery_percent is not None]
+        temperature_values = [s.temperature for s in samples if s.temperature is not None]
 
         return {
             "cpu": Statistics.compute_all_stats(cpu_values) if cpu_values else None,
             "memory": Statistics.compute_all_stats(memory_values) if memory_values else None,
             "fps": Statistics.compute_all_stats(fps_values) if fps_values else None,
-            "battery": Statistics.compute_all_stats(battery_values) if battery_values else None,
+            "temperature": Statistics.compute_all_stats(temperature_values) if temperature_values else None,
             "sample_count": len(samples),
         }

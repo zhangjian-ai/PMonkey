@@ -73,13 +73,15 @@ def run(
         console.print(f"[cyan]App:[/cyan] {test_config.app_package}")
 
         # Import required modules
-        from .core.bounds import random_point_in_bounds
+        from .config.models import Platform
         from .core.events import EventGenerator
         from .core.scheduler import MonkeyScheduler
         from .devices.factory import DeviceFactory
         from .monitoring.android_monitor import AndroidMonitor
+        from .monitoring.ios_monitor import IOSMonitor
         from .reporting.generator import ReportGenerator
         from .stability.android_monitor import AndroidStabilityMonitor
+        from .stability.ios_monitor import IOSStabilityMonitor
         from .stability.recovery import RecoveryStrategy
 
         # Create device
@@ -106,20 +108,35 @@ def run(
             test_config.bounds,
             screen_width,
             screen_height,
+            swipe_duration_min_ms=test_config.swipe_duration.min_ms,
+            swipe_duration_max_ms=test_config.swipe_duration.max_ms,
         )
 
-        # Create monitors
+        # Create monitors based on platform
         performance_monitor = None
         stability_monitor = None
         recovery_strategy = None
+        is_android = test_config.platform == Platform.ANDROID
 
         if test_config.monitoring.enabled:
             console.print("[cyan]Starting performance monitoring...[/cyan]")
-            performance_monitor = AndroidMonitor(test_config.device_id)
+            if is_android:
+                performance_monitor = AndroidMonitor(
+                    test_config.device_id,
+                    sample_interval_seconds=test_config.monitoring.sample_interval_seconds,
+                )
+            else:
+                performance_monitor = IOSMonitor(
+                    test_config.device_id,
+                    sample_interval_seconds=test_config.monitoring.sample_interval_seconds,
+                )
 
         if test_config.stability.monitor_crashes or test_config.stability.monitor_anr:
             console.print("[cyan]Starting stability monitoring...[/cyan]")
-            stability_monitor = AndroidStabilityMonitor(test_config.device_id)
+            if is_android:
+                stability_monitor = AndroidStabilityMonitor(test_config.device_id)
+            else:
+                stability_monitor = IOSStabilityMonitor(test_config.device_id)
 
         # Create recovery strategy if crash/ANR recovery is enabled
         if test_config.stability.continue_on_crash or test_config.stability.continue_on_anr:
@@ -146,6 +163,7 @@ def run(
             performance_samples,
             stability_report,
             test_config.report.output_path,
+            performance_monitor,
         )
 
         # Print summary
@@ -168,24 +186,43 @@ def run(
 @main.command()
 def list_devices() -> None:
     """List available devices."""
-    from .devices.factory import DeviceFactory
+    from .devices.factory import DeviceFactory, DeviceInfo
 
     console.print("[cyan]Scanning for devices...[/cyan]\n")
+
+    def _format(d: DeviceInfo) -> str:
+        # device_id is the only required column; everything else is shown
+        # in parentheses if we managed to read it.
+        extras = []
+        if d.name:
+            extras.append(d.name)
+        if d.os_version:
+            extras.append(f"iOS {d.os_version}" if d.platform.value == "ios"
+                          else f"Android {d.os_version}")
+        if d.resolution:
+            extras.append(d.resolution)
+        suffix = f"  ({', '.join(extras)})" if extras else ""
+        return f"  • {d.device_id}{suffix}"
 
     # Detect Android devices
     android_devices = DeviceFactory.detect_android_devices()
     if android_devices:
         console.print("[green]Android Devices:[/green]")
         for device in android_devices:
-            console.print(f"  • {device.device_id} {f'({device.name})' if device.name else ''}")
+            console.print(_format(device))
     else:
         console.print("[yellow]No Android devices found[/yellow]")
 
     # Detect iOS devices
-    console.print("\n[cyan]iOS Devices:[/cyan]")
-    console.print("[yellow]iOS device detection not yet implemented[/yellow]")
+    ios_devices = DeviceFactory.detect_ios_devices()
+    if ios_devices:
+        console.print("\n[green]iOS Devices:[/green]")
+        for device in ios_devices:
+            console.print(_format(device))
+    else:
+        console.print("\n[yellow]No iOS devices found[/yellow]")
 
-    if not android_devices:
+    if not android_devices and not ios_devices:
         console.print("\n[yellow]No devices found. Make sure devices are connected and authorized.[/yellow]")
 
 

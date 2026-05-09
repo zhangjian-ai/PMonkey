@@ -152,3 +152,37 @@ class TestEventGenerator:
         for _ in range(10):
             event = generator.generate()
             assert isinstance(event, SwipeEvent)
+
+    def test_swipe_duration_respects_config(self):
+        """Swipe duration must fall within the configured range."""
+        generator = EventGenerator(
+            0.0, 1.0, None, 1080, 1920,
+            swipe_duration_min_ms=250,
+            swipe_duration_max_ms=400,
+        )
+
+        for _ in range(50):
+            event = generator.generate()
+            assert isinstance(event, SwipeEvent)
+            assert 250 <= event.duration_ms <= 400
+
+    def test_swipe_duration_fixed_when_min_equals_max(self):
+        """When min_ms == max_ms, every swipe uses that exact duration."""
+        generator = EventGenerator(
+            0.0, 1.0, None, 1080, 1920,
+            swipe_duration_min_ms=300,
+            swipe_duration_max_ms=300,
+        )
+
+        for _ in range(20):
+            event = generator.generate()
+            assert event.duration_ms == 300
+
+    def test_swipe_duration_rejects_invalid_range(self):
+        """Generator must reject min > max."""
+        with pytest.raises(ValueError):
+            EventGenerator(
+                0.0, 1.0, None, 1080, 1920,
+                swipe_duration_min_ms=500,
+                swipe_duration_max_ms=200,
+            )

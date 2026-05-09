@@ -9,6 +9,7 @@ from play_monkey.config.models import (
     MonitoringConfig,
     Platform,
     StabilityConfig,
+    SwipeDurationConfig,
     TestConfig,
 )
 
@@ -97,6 +98,56 @@ class TestMonitoringConfig:
 
 class TestStabilityConfig:
     """Tests for StabilityConfig model."""
+
+    def test_default_config(self):
+        """Test default stability configuration."""
+        config = StabilityConfig()
+        assert config.monitor_crashes is True
+        assert config.monitor_anr is True
+        assert config.monitor_errors is True
+        assert config.continue_on_crash is True
+        assert config.continue_on_anr is True
+        assert config.anr_threshold_seconds == 5.0
+
+    def test_custom_config(self):
+        """Test custom stability configuration."""
+        config = StabilityConfig(
+            monitor_crashes=False,
+            continue_on_crash=False,
+            max_crash_count=3
+        )
+        assert config.monitor_crashes is False
+        assert config.continue_on_crash is False
+        assert config.max_crash_count == 3
+
+
+class TestSwipeDurationConfig:
+    """Tests for SwipeDurationConfig model."""
+
+    def test_default_config(self):
+        config = SwipeDurationConfig()
+        assert config.min_ms == 100
+        assert config.max_ms == 500
+
+    def test_custom_config(self):
+        config = SwipeDurationConfig(min_ms=50, max_ms=200)
+        assert config.min_ms == 50
+        assert config.max_ms == 200
+
+    def test_fixed_duration(self):
+        config = SwipeDurationConfig(min_ms=300, max_ms=300)
+        assert config.min_ms == 300
+        assert config.max_ms == 300
+
+    def test_min_must_not_exceed_max(self):
+        with pytest.raises(ValidationError):
+            SwipeDurationConfig(min_ms=800, max_ms=200)
+
+    def test_positive_only(self):
+        with pytest.raises(ValidationError):
+            SwipeDurationConfig(min_ms=0, max_ms=300)
+        with pytest.raises(ValidationError):
+            SwipeDurationConfig(min_ms=-10, max_ms=300)
 
     def test_default_config(self):
         """Test default stability configuration."""

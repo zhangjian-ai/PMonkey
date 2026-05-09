@@ -1,12 +1,12 @@
-platform: android
-device_id: c33042bb
+platform: ios
+device_id: 00008101-001971E83C92001E  # Replace with your device UDID
 app_package: com.merge.foodie.cooking.restaurant
 
 event_ratios:
-  tap: 0.6
-  swipe: 0.4
+  tap: 0.7
+  swipe: 0.3
 
-interval_ms: 100
+interval_ms: 200
 duration_seconds: 180
 #event_count: 500
 
@@ -16,15 +16,15 @@ swipe_duration:
   max_ms: 100
 
 bounds:
-  x_min: 30
-  x_max: 1050
-  y_min: 700
-  y_max: 2030
+  x_min: 15
+  x_max: 415
+  y_min: 350
+  y_max: 750
 
 monitoring:
   enabled: true
   sample_interval_seconds: 1
-  metrics:
+  metrics:  # 未使用字段
     - cpu
     - memory
     - fps
@@ -32,13 +32,11 @@ monitoring:
 
 stability:
   monitor_crashes: true
-  monitor_anr: true
+  monitor_anr: false  # ANR is Android-specific
   monitor_errors: true
   continue_on_crash: true
-  continue_on_anr: true
-  anr_threshold_seconds: 3.0
   max_crash_count: 1
 
 report:
-  output_path: ./report.html
-  include_raw_data: true
+  output_path: ./ios_report.html
+  include_raw_data: true  # 未使用字段
