@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Tuple
 
-from ..config.models import BoundsConfig
-from .bounds import random_point_in_bounds
+from ..config.models import BoundsConfig, ExclusionZone
+from .bounds import random_point_in_bounds, random_point_avoiding_exclusions
 
 
 class EventType(str, Enum):
@@ -96,6 +96,7 @@ class EventGenerator:
         screen_height: int,
         swipe_duration_min_ms: int = 100,
         swipe_duration_max_ms: int = 500,
+        exclusion_zones: Optional[list[ExclusionZone]] = None,
     ):
         """Initialize event generator.
 
@@ -107,6 +108,7 @@ class EventGenerator:
             screen_height: Device screen height
             swipe_duration_min_ms: Minimum swipe duration in milliseconds
             swipe_duration_max_ms: Maximum swipe duration in milliseconds
+            exclusion_zones: List of forbidden areas to avoid
         """
         self.tap_ratio = tap_ratio
         self.swipe_ratio = swipe_ratio
@@ -115,6 +117,7 @@ class EventGenerator:
         self.screen_height = screen_height
         self.swipe_duration_min_ms = swipe_duration_min_ms
         self.swipe_duration_max_ms = swipe_duration_max_ms
+        self.exclusion_zones = exclusion_zones or []
 
         # Validate ratios
         total = tap_ratio + swipe_ratio
@@ -147,14 +150,27 @@ class EventGenerator:
 
     def _generate_tap(self) -> TapEvent:
         """Generate a random tap event."""
-        x, y = random_point_in_bounds(self.bounds, self.screen_width, self.screen_height)
+        if self.exclusion_zones:
+            x, y = random_point_avoiding_exclusions(
+                self.bounds, self.screen_width, self.screen_height, self.exclusion_zones
+            )
+        else:
+            x, y = random_point_in_bounds(self.bounds, self.screen_width, self.screen_height)
         return TapEvent(x, y)
 
     def _generate_swipe(self) -> SwipeEvent:
         """Generate a random swipe event."""
-        # Generate start and end points
-        x1, y1 = random_point_in_bounds(self.bounds, self.screen_width, self.screen_height)
-        x2, y2 = random_point_in_bounds(self.bounds, self.screen_width, self.screen_height)
+        # Generate start and end points, avoiding exclusion zones
+        if self.exclusion_zones:
+            x1, y1 = random_point_avoiding_exclusions(
+                self.bounds, self.screen_width, self.screen_height, self.exclusion_zones
+            )
+            x2, y2 = random_point_avoiding_exclusions(
+                self.bounds, self.screen_width, self.screen_height, self.exclusion_zones
+            )
+        else:
+            x1, y1 = random_point_in_bounds(self.bounds, self.screen_width, self.screen_height)
+            x2, y2 = random_point_in_bounds(self.bounds, self.screen_width, self.screen_height)
 
         # Random duration within the configured range (inclusive on both ends)
         import random

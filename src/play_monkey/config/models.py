@@ -51,6 +51,23 @@ class BoundsConfig(BaseModel):
         return self
 
 
+class ExclusionZone(BaseModel):
+    """Exclusion zone (forbidden area) configuration."""
+    x_min: int = Field(ge=0, description="Minimum X coordinate")
+    x_max: int = Field(gt=0, description="Maximum X coordinate")
+    y_min: int = Field(ge=0, description="Minimum Y coordinate")
+    y_max: int = Field(gt=0, description="Maximum Y coordinate")
+
+    @model_validator(mode="after")
+    def validate_zone(self) -> "ExclusionZone":
+        """Validate that min < max for both axes."""
+        if self.x_min >= self.x_max:
+            raise ValueError(f"x_min ({self.x_min}) must be less than x_max ({self.x_max})")
+        if self.y_min >= self.y_max:
+            raise ValueError(f"y_min ({self.y_min}) must be less than y_max ({self.y_max})")
+        return self
+
+
 class DurationConfig(BaseModel):
     """Test duration configuration. event_count takes priority over duration_seconds."""
     event_count: Optional[int] = Field(None, gt=0, description="Total number of events to execute")
@@ -123,6 +140,7 @@ class TestConfig(BaseModel):
     duration_seconds: Optional[int] = Field(None, gt=0, description="Test duration in seconds")
 
     bounds: Optional[BoundsConfig] = Field(None, description="Coordinate bounds")
+    exclusion_zones: list[ExclusionZone] = Field(default_factory=list, description="Forbidden areas")
 
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     stability: StabilityConfig = Field(default_factory=StabilityConfig)

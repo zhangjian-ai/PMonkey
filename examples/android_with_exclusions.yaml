@@ -1,0 +1,65 @@
+platform: android
+device_id: c33042bb
+app_package: com.merge.foodie.cooking.restaurant
+
+event_ratios:
+  tap: 0.7
+  swipe: 0.3
+
+interval_ms: 100
+event_count: 1000
+
+# Swipe gesture duration range in milliseconds (uniformly sampled per swipe)
+swipe_duration:
+  min_ms: 100
+  max_ms: 500
+
+# Optional: Coordinate bounds (if not specified, uses full screen)
+# bounds:
+#   x_min: 0
+#   x_max: 1080
+#   y_min: 0
+#   y_max: 2340
+
+# Exclusion zones: forbidden areas where taps/swipes will not occur
+# Useful for avoiding navigation bars, system buttons, or sensitive UI elements
+exclusion_zones:
+  # Top status bar area
+  - x_min: 0
+    x_max: 1080
+    y_min: 0
+    y_max: 100
+
+  # Bottom navigation bar area
+  - x_min: 0
+    x_max: 1080
+    y_min: 2200
+    y_max: 2340
+
+  # Example: Avoid a specific button area (e.g., logout button)
+  - x_min: 900
+    x_max: 1050
+    y_min: 50
+    y_max: 150
+
+monitoring:
+  enabled: true
+  sample_interval_seconds: 2
+  metrics:
+    - cpu
+    - memory
+    - fps
+    - battery
+
+stability:
+  monitor_crashes: true
+  monitor_anr: true
+  monitor_errors: true
+  continue_on_crash: true
+  continue_on_anr: true
+  anr_threshold_seconds: 5.0
+  max_crash_count: 3
+
+report:
+  output_path: ./report.html
+  include_raw_data: false

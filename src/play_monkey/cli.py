@@ -101,15 +101,36 @@ def run(
         screen_width, screen_height = device.get_screen_size()
         console.print(f"[cyan]Screen size:[/cyan] {screen_width}x{screen_height}")
 
+        # Auto-initialize bounds from screen size if not configured
+        from .config.models import BoundsConfig
+        bounds = test_config.bounds
+        if bounds is None:
+            bounds = BoundsConfig(
+                x_min=0,
+                x_max=screen_width - 1,
+                y_min=0,
+                y_max=screen_height - 1
+            )
+            console.print(f"[cyan]Bounds:[/cyan] Full screen (0, 0) -> ({screen_width - 1}, {screen_height - 1})")
+        else:
+            console.print(f"[cyan]Bounds:[/cyan] ({bounds.x_min}, {bounds.y_min}) -> ({bounds.x_max}, {bounds.y_max})")
+
+        # Show exclusion zones if configured
+        if test_config.exclusion_zones:
+            console.print(f"[cyan]Exclusion zones:[/cyan] {len(test_config.exclusion_zones)} zone(s)")
+            for i, zone in enumerate(test_config.exclusion_zones, 1):
+                console.print(f"  Zone {i}: ({zone.x_min}, {zone.y_min}) -> ({zone.x_max}, {zone.y_max})")
+
         # Create event generator
         event_generator = EventGenerator(
             test_config.event_ratios.tap,
             test_config.event_ratios.swipe,
-            test_config.bounds,
+            bounds,
             screen_width,
             screen_height,
             swipe_duration_min_ms=test_config.swipe_duration.min_ms,
             swipe_duration_max_ms=test_config.swipe_duration.max_ms,
+            exclusion_zones=test_config.exclusion_zones,
         )
 
         # Create monitors based on platform

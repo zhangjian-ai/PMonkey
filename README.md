@@ -182,12 +182,28 @@ swipe_duration:
   min_ms: 50
   max_ms: 100
 
-# 事件坐标边界，避开状态栏 / Home bar
+# 可选：事件坐标边界（不配置则使用全屏）
+# 配置后所有 tap/swipe 都在此范围内生成
 bounds:
   x_min: 15
   x_max: 415
   y_min: 350
   y_max: 750
+
+# 可选：禁区配置（避开特定区域）
+# 所有 tap 和 swipe 的起点/终点都会避开这些区域
+# 适用场景：状态栏、导航栏、退出按钮等敏感区域
+exclusion_zones:
+  # 顶部状态栏
+  - x_min: 0
+    x_max: 415
+    y_min: 0
+    y_max: 100
+  # 底部导航栏
+  - x_min: 0
+    x_max: 415
+    y_min: 750
+    y_max: 844
 
 monitoring:
   enabled: true
