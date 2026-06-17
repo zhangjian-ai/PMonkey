@@ -1,22 +1,37 @@
-"""Android device implementation with persistent ADB shell session.
+"""Android device implementation using minitouch for touch injection.
 
-Based on tms-agent's high-performance socket communication.
-Key design: one TCP connection + one shell session per test run.
-All tap/swipe commands reuse the same session.
+Touch events go through minitouch (direct evdev writes to /dev/input) rather
+than ``adb shell input``: minitouch avoids a per-event JVM cold-start (~0.6s)
+and lets us emit DOWN/MOVE/UP under explicit, serial control so they are always
+paired. Non-input operations (state, screen size, app management, getprop)
+still use plain ``adb`` subprocess calls.
+
+The minitouch binary is bundled per-ABI under play_monkey/binaries and pushed
+to the device at connect() time. If minitouch cannot be started, connect()
+fails loudly - there is no fallback to the slow ``input`` path.
 """
 
 import asyncio
+import importlib.resources as resources
 import re
 import subprocess
 import threading
 from typing import Optional, Tuple
 
 from .base import Device
-from .adb_protocol import AdbClient, PersistentShellSession
+from .minitouch import (
+    DEVICE_BINARY_PATH,
+    MinitouchSession,
+    build_swipe_steps,
+    scale,
+)
+
+# ABIs we ship a minitouch binary for, preferred order for abilist matching.
+SUPPORTED_ABIS = ("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
 
 
 class AndroidDevice(Device):
-    """Android device with persistent ADB shell session for input commands."""
+    """Android device using minitouch for tap/swipe injection."""
 
     def __init__(self, device_id: str, adb_path: str = "adb"):
         """Initialize Android device.
@@ -31,10 +46,10 @@ class AndroidDevice(Device):
         self._screen_width: Optional[int] = None
         self._screen_height: Optional[int] = None
 
-        # Persistent shell session (established once per test)
-        self._shell_session: Optional[PersistentShellSession] = None
+        # minitouch session (established once per test)
+        self._minitouch: Optional[MinitouchSession] = None
 
-        # Dedicated event loop for async ADB operations
+        # Dedicated event loop for async socket I/O
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
         self._loop_ready = threading.Event()
@@ -43,7 +58,7 @@ class AndroidDevice(Device):
         """Run an ADB command via subprocess (for non-input operations).
 
         Used for device state queries, screen size, app management, etc.
-        Input events go through the persistent shell session instead.
+        Touch events go through minitouch instead.
         """
         full_command = f"{self.adb_path} -s {self.device_id} {command}"
         try:
@@ -89,11 +104,61 @@ class AndroidDevice(Device):
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result(timeout=timeout)
 
-    def connect(self) -> bool:
-        """Connect to device and establish persistent shell session.
+    def _detect_abi(self) -> str:
+        """Detect the device CPU ABI and map it to a bundled binary.
 
-        This is the only place where we create the ADB transport connection.
-        Subsequent tap/swipe calls reuse the same session.
+        Falls back to ro.product.cpu.abilist to find the first supported ABI.
+        Returns a value from SUPPORTED_ABIS, or "" if none match.
+        """
+        success, output = self._run_adb_command("shell getprop ro.product.cpu.abi")
+        abi = output.strip() if success else ""
+        if abi in SUPPORTED_ABIS:
+            return abi
+
+        success, output = self._run_adb_command("shell getprop ro.product.cpu.abilist")
+        if success:
+            for candidate in output.strip().split(","):
+                candidate = candidate.strip()
+                if candidate in SUPPORTED_ABIS:
+                    return candidate
+        return ""
+
+    def _push_minitouch(self, abi: str) -> bool:
+        """Push the bundled minitouch binary for ``abi`` and make it executable."""
+        binary = (
+            resources.files("play_monkey")
+            / "binaries"
+            / "android"
+            / "minitouch"
+            / abi
+            / "minitouch"
+        )
+        try:
+            with resources.as_file(binary) as local_path:
+                result = subprocess.run(
+                    f"{self.adb_path} -s {self.device_id} push "
+                    f"{local_path} {DEVICE_BINARY_PATH}",
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            if result.returncode != 0:
+                print(f"Warning: minitouch push failed: {result.stderr.strip()}")
+                return False
+        except Exception as e:
+            print(f"Warning: minitouch push failed: {e}")
+            return False
+
+        success, _ = self._run_adb_command(f"shell chmod 755 {DEVICE_BINARY_PATH}")
+        return success
+
+    def connect(self) -> bool:
+        """Connect to device and start a minitouch session.
+
+        Establishes everything once per test: detect ABI, push minitouch, start
+        it, and connect to its control socket. Fails loudly if minitouch cannot
+        be brought up - no fallback to the slow ``input`` path.
         """
         success, output = self._run_adb_command("get-state")
         if not (success and "device" in output):
@@ -102,61 +167,43 @@ class AndroidDevice(Device):
         self._connected = True
         self._screen_width, self._screen_height = self.get_screen_size()
 
+        abi = self._detect_abi()
+        if not abi:
+            print("Error: no bundled minitouch binary for this device's ABI")
+            self._connected = False
+            return False
+
+        if not self._push_minitouch(abi):
+            self._connected = False
+            return False
+
         # Start background event loop for async socket I/O
         self._start_event_loop()
 
-        # Establish the ONE persistent shell session for this test
         try:
-            client = AdbClient()
-            self._shell_session = self._run_async(
-                client.open_persistent_shell(self.device_id),
-                timeout=10.0,
-            )
+            session = MinitouchSession(self.device_id)
+            self._run_async(session.open(), timeout=10.0)
+            self._minitouch = session
         except Exception as e:
-            # If persistent shell fails, device is still marked connected
-            # but input commands will return False
-            self._shell_session = None
-            print(f"Warning: Failed to open persistent shell: {e}")
+            print(f"Error: failed to start minitouch: {e}")
+            self._minitouch = None
+            self._stop_event_loop()
+            self._connected = False
             return False
 
         return True
 
     def disconnect(self) -> None:
-        """Close persistent shell session and stop event loop.
-
-        Kills any queued input commands on the device by terminating running
-        input processes before closing the connection.
-        """
-        # Kill device-side input commands that may still be executing
-        self._run_adb_command("shell pkill -f 'input '")
-
-        if self._shell_session and self._loop:
+        """Close the minitouch session and stop the event loop."""
+        if self._minitouch and self._loop:
             try:
-                self._run_async(self._shell_session.close(), timeout=3.0)
+                self._run_async(self._minitouch.close(), timeout=3.0)
             except Exception:
                 pass
-            self._shell_session = None
+            self._minitouch = None
 
         self._stop_event_loop()
         self._connected = False
-
-    def _send_input(self, command: str) -> bool:
-        """Send input command through the persistent shell session.
-
-        This reuses the single TCP connection established at connect() time.
-        No new connection, no transport switch, no shell fork - just a stdin write.
-        """
-        if not self._shell_session or not self._loop:
-            return False
-
-        async def send():
-            return await self._shell_session.send_command(command)
-
-        try:
-            future = asyncio.run_coroutine_threadsafe(send(), self._loop)
-            return future.result(timeout=1.0)
-        except Exception:
-            return False
 
     def get_screen_size(self) -> Tuple[int, int]:
         """Get device screen dimensions."""
@@ -175,17 +222,45 @@ class AndroidDevice(Device):
 
         return (1080, 1920)
 
+    def _touch_space(self) -> Tuple[int, int]:
+        """minitouch coordinate space (max_x, max_y) from the handshake banner."""
+        if self._minitouch and self._minitouch.banner:
+            return (self._minitouch.banner.max_x, self._minitouch.banner.max_y)
+        # Fallback to display space if banner is somehow unavailable.
+        return (self._screen_width or 1080, self._screen_height or 1920)
+
     def tap(self, x: int, y: int) -> bool:
-        """Send tap through persistent shell session."""
-        if not self._connected:
+        """Inject a tap via minitouch."""
+        if not self._connected or not self._minitouch:
             return False
-        return self._send_input(f"input tap {x} {y}")
+        max_x, max_y = self._touch_space()
+        tx, ty = scale(
+            x, y, self._screen_width or 1080, self._screen_height or 1920, max_x, max_y
+        )
+        try:
+            self._run_async(self._minitouch.tap(tx, ty), timeout=2.0)
+            return True
+        except Exception:
+            return False
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int) -> bool:
-        """Send swipe through persistent shell session."""
-        if not self._connected:
+        """Inject a swipe via minitouch, blocking for the gesture duration."""
+        if not self._connected or not self._minitouch:
             return False
-        return self._send_input(f"input swipe {x1} {y1} {x2} {y2} {duration_ms}")
+        max_x, max_y = self._touch_space()
+        sw = self._screen_width or 1080
+        sh = self._screen_height or 1920
+        tx1, ty1 = scale(x1, y1, sw, sh, max_x, max_y)
+        tx2, ty2 = scale(x2, y2, sw, sh, max_x, max_y)
+        points, step_sleep = build_swipe_steps(tx1, ty1, tx2, ty2, duration_ms)
+        try:
+            self._run_async(
+                self._minitouch.swipe(tx1, ty1, points, step_sleep),
+                timeout=duration_ms / 1000.0 + 3.0,
+            )
+            return True
+        except Exception:
+            return False
 
     def is_app_running(self, app_identifier: str) -> bool:
         """Check if the specified app is running."""

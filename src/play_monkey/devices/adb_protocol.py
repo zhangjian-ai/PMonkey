@@ -1,10 +1,10 @@
 """Direct ADB protocol implementation for high-performance communication.
 
-Based on tms-agent's implementation, using asyncio for direct TCP communication
-with ADB daemon, bypassing shell overhead.
-
-Key optimization: reuse a single persistent shell session per device,
-sending all input commands through that one TCP connection.
+Using asyncio for direct TCP communication with the ADB daemon, bypassing
+shell overhead. Provides the low-level wire protocol (length-prefixed commands,
+OKAY/FAIL handling) and a single TCP connection abstraction. Higher-level
+sessions (e.g. minitouch) build on AdbConnection by switching transport and
+requesting a local service.
 """
 
 import asyncio
@@ -114,100 +114,3 @@ class AdbConnection:
                 await self.writer.wait_closed()
             except Exception:
                 pass
-
-
-class PersistentShellSession:
-    """Persistent interactive shell session to a device.
-
-    Opens a single TCP connection to ADB daemon, switches to device transport,
-    then opens an interactive shell. All subsequent commands are sent through
-    this one connection via stdin - no new connections per command.
-    """
-
-    def __init__(self, serial: str, host: str = '127.0.0.1', port: int = 5037):
-        self.serial = serial
-        self.host = host
-        self.port = port
-        self._conn: Optional[AdbConnection] = None
-        self._lock = asyncio.Lock()
-
-    async def open(self) -> None:
-        """Open persistent shell session.
-
-        Protocol sequence:
-        1. TCP connect to ADB daemon
-        2. Send 'host:transport:<serial>' to switch transport
-        3. Send 'shell:' to open interactive shell
-        4. Keep connection open for subsequent command writes
-        """
-        self._conn = AdbConnection(self.host, self.port)
-        await self._conn.connect()
-
-        # Switch to device transport
-        await self._conn.write(AdbProtocol.encode_command(f"host:transport:{self.serial}"))
-        await self._conn.check_okay()
-
-        # Open interactive shell - no command means it stays open
-        await self._conn.write(AdbProtocol.encode_command("shell:"))
-        await self._conn.check_okay()
-
-        # From here on, the connection is a raw stdin/stdout pipe to the shell
-
-    async def send_command(self, command: str) -> bool:
-        """Send a shell command through the persistent session.
-
-        Appends '&' to run the command in background on the device shell,
-        so it starts executing immediately without blocking subsequent commands.
-
-        Args:
-            command: Shell command to execute (e.g., "input tap 500 1000")
-
-        Returns:
-            True if command was sent, False if session is dead
-        """
-        if not self._conn or not self._conn.is_alive():
-            return False
-
-        try:
-            self._conn.write_nowait(f"{command} &\n".encode('utf-8'))
-            return True
-        except Exception:
-            return False
-
-    async def flush(self) -> None:
-        """Ensure pending writes are sent to the device."""
-        if self._conn and self._conn.is_alive() and self._conn.writer:
-            try:
-                await self._conn.writer.drain()
-            except Exception:
-                pass
-
-    async def close(self) -> None:
-        """Close the persistent shell session."""
-        if self._conn:
-            try:
-                # Send exit to cleanly terminate shell
-                self._conn.write_nowait(b"exit\n")
-            except Exception:
-                pass
-            await self._conn.close()
-            self._conn = None
-
-
-class AdbClient:
-    """High-level ADB client using direct protocol."""
-
-    def __init__(self, host: str = '127.0.0.1', port: int = 5037):
-        self.host = host
-        self.port = port
-
-    async def open_persistent_shell(self, serial: str) -> PersistentShellSession:
-        """Open a persistent shell session for the given device.
-
-        This establishes the ADB transport connection ONCE and keeps it open
-        for the duration of the test. All subsequent commands are sent through
-        this single connection.
-        """
-        session = PersistentShellSession(serial, self.host, self.port)
-        await session.open()
-        return session

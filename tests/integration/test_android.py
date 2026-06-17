@@ -26,36 +26,49 @@ from play_monkey.stability.models import StabilityIssueType
 
 
 class TestAndroidDeviceMocked:
-    """Test AndroidDevice with mocked subprocess and shell session."""
+    """Test AndroidDevice with mocked subprocess and minitouch session."""
 
     def _make_fake_session(self):
-        """Create a fake async PersistentShellSession."""
-        async def send_ok(cmd):
-            return True
+        """Create a fake async MinitouchSession with a parsed banner."""
+        from play_monkey.devices.minitouch import MinitouchBanner
 
-        async def noop_close():
+        async def noop(*args, **kwargs):
             return None
 
         session = MagicMock()
-        session.send_command = MagicMock(side_effect=send_ok)
-        session.close = MagicMock(side_effect=noop_close)
+        session.open = MagicMock(side_effect=noop)
+        session.tap = MagicMock(side_effect=noop)
+        session.swipe = MagicMock(side_effect=noop)
+        session.close = MagicMock(side_effect=noop)
+        session.banner = MinitouchBanner(
+            max_contacts=10, max_x=1080, max_y=2340, max_pressure=255
+        )
         return session
 
-    @patch("play_monkey.devices.android.AdbClient")
+    def _fake_run(self, abi="arm64-v8a", get_state="device\n"):
+        """Build a subprocess.run side_effect covering the connect() calls."""
+        def run(cmd, *args, **kwargs):
+            if "get-state" in cmd:
+                return MagicMock(returncode=0, stdout=get_state, stderr="")
+            if "wm size" in cmd:
+                return MagicMock(
+                    returncode=0, stdout="Physical size: 1080x2340\n", stderr=""
+                )
+            if "ro.product.cpu.abi" in cmd:
+                return MagicMock(returncode=0, stdout=f"{abi}\n", stderr="")
+            if "push" in cmd:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        return run
+
+    @patch("play_monkey.devices.android.MinitouchSession")
     @patch("play_monkey.devices.android.subprocess.run")
-    def test_connect_success(self, mock_run, mock_adb_client_cls):
+    def test_connect_success(self, mock_run, mock_session_cls):
         from play_monkey.devices.android import AndroidDevice
 
-        mock_run.return_value = MagicMock(returncode=0, stdout="device\n")
-
-        fake_session = self._make_fake_session()
-
-        async def fake_open_shell(serial):
-            return fake_session
-
-        mock_adb_client_cls.return_value.open_persistent_shell = MagicMock(
-            side_effect=fake_open_shell
-        )
+        mock_run.side_effect = self._fake_run()
+        mock_session_cls.return_value = self._make_fake_session()
 
         device = AndroidDevice("emulator-5554")
         assert device.connect() is True
@@ -65,7 +78,34 @@ class TestAndroidDeviceMocked:
     def test_connect_failure(self, mock_run):
         from play_monkey.devices.android import AndroidDevice
 
-        mock_run.return_value = MagicMock(returncode=1, stdout="")
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
+        device = AndroidDevice("emulator-5554")
+        assert device.connect() is False
+
+    @patch("play_monkey.devices.android.subprocess.run")
+    def test_connect_unsupported_abi_fails(self, mock_run):
+        """No bundled binary for the ABI -> connect fails loudly, no fallback."""
+        from play_monkey.devices.android import AndroidDevice
+
+        mock_run.side_effect = self._fake_run(abi="mips64")
+        device = AndroidDevice("emulator-5554")
+        assert device.connect() is False
+
+    @patch("play_monkey.devices.android.MinitouchSession")
+    @patch("play_monkey.devices.android.subprocess.run")
+    def test_connect_minitouch_open_failure_fails(self, mock_run, mock_session_cls):
+        """If minitouch can't start, connect fails (no silent input fallback)."""
+        from play_monkey.devices.android import AndroidDevice
+
+        mock_run.side_effect = self._fake_run()
+
+        async def boom(*args, **kwargs):
+            raise ConnectionError("socket unavailable")
+
+        session = MagicMock()
+        session.open = MagicMock(side_effect=boom)
+        mock_session_cls.return_value = session
+
         device = AndroidDevice("emulator-5554")
         assert device.connect() is False
 
@@ -81,68 +121,45 @@ class TestAndroidDeviceMocked:
         assert w == 1080
         assert h == 1920
 
-    @patch("play_monkey.devices.android.AdbClient")
+    @patch("play_monkey.devices.android.MinitouchSession")
     @patch("play_monkey.devices.android.subprocess.run")
-    def test_tap(self, mock_run, mock_adb_client_cls):
+    def test_tap(self, mock_run, mock_session_cls):
         from play_monkey.devices.android import AndroidDevice
 
-        mock_run.return_value = MagicMock(returncode=0, stdout="device\n")
-
+        mock_run.side_effect = self._fake_run()
         fake_session = self._make_fake_session()
-
-        async def fake_open_shell(serial):
-            return fake_session
-
-        mock_adb_client_cls.return_value.open_persistent_shell = MagicMock(
-            side_effect=fake_open_shell
-        )
+        mock_session_cls.return_value = fake_session
 
         device = AndroidDevice("emulator-5554")
         device.connect()
         result = device.tap(100, 200)
         assert result is True
+        assert fake_session.tap.called
         device.disconnect()
 
-    @patch("play_monkey.devices.android.AdbClient")
+    @patch("play_monkey.devices.android.MinitouchSession")
     @patch("play_monkey.devices.android.subprocess.run")
-    def test_swipe(self, mock_run, mock_adb_client_cls):
+    def test_swipe(self, mock_run, mock_session_cls):
         from play_monkey.devices.android import AndroidDevice
 
-        mock_run.return_value = MagicMock(returncode=0, stdout="device\n")
-
+        mock_run.side_effect = self._fake_run()
         fake_session = self._make_fake_session()
-
-        async def fake_open_shell(serial):
-            return fake_session
-
-        mock_adb_client_cls.return_value.open_persistent_shell = MagicMock(
-            side_effect=fake_open_shell
-        )
+        mock_session_cls.return_value = fake_session
 
         device = AndroidDevice("emulator-5554")
         device.connect()
         result = device.swipe(100, 200, 300, 400, 500)
         assert result is True
+        assert fake_session.swipe.called
         device.disconnect()
 
-    @patch("play_monkey.devices.android.AdbClient")
+    @patch("play_monkey.devices.android.MinitouchSession")
     @patch("play_monkey.devices.android.subprocess.run")
-    def test_session_reused_across_commands(self, mock_run, mock_adb_client_cls):
+    def test_session_reused_across_commands(self, mock_run, mock_session_cls):
         from play_monkey.devices.android import AndroidDevice
 
-        mock_run.return_value = MagicMock(returncode=0, stdout="device\n")
-
-        fake_session = self._make_fake_session()
-        call_count = 0
-
-        async def fake_open_shell(serial):
-            nonlocal call_count
-            call_count += 1
-            return fake_session
-
-        mock_adb_client_cls.return_value.open_persistent_shell = MagicMock(
-            side_effect=fake_open_shell
-        )
+        mock_run.side_effect = self._fake_run()
+        mock_session_cls.return_value = self._make_fake_session()
 
         device = AndroidDevice("emulator-5554")
         device.connect()
@@ -151,7 +168,8 @@ class TestAndroidDeviceMocked:
         device.swipe(100, 200, 300, 400, 500)
         device.disconnect()
 
-        assert call_count == 1
+        # One minitouch session created and reused for all gestures.
+        assert mock_session_cls.call_count == 1
 
 
 # ── Android monitor tests (SoloX-based) ────────────────────────────
